@@ -1,0 +1,8 @@
+{
+    "name": "line-bot",
+    "version": "1.0.0",
+    "dependencies": {
+          "@google/generative-ai": "^0.21.0",
+          "@line/bot-sdk": "^9.3.0"
+    }
+}
