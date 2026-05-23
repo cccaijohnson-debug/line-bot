@@ -65,7 +65,7 @@ async function buildSummary(groupId) {
     return 'まだ整理できる会話履歴がありません。\nグループで会話が蓄積されてからもう一度お試しください！';
   }
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
   const historyText = history.map(m => m.displayName + ': ' + m.text).join('\n');
   const parts = [];
   parts.push('以下はプロジェクトチームのグループLINEの会話履歴です。プロジェクト管理の観点から分析し、必ず以下の5項目を日本語で出力してください：');
