@@ -8,9 +8,7 @@ const MAX_HISTORY = 200;
 function readRawBody(req) {
   return new Promise((resolve, reject) => {
     if (req.body !== undefined && req.body !== null) {
-      const raw = Buffer.isBuffer(req.body)
-        ? req.body
-        : Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body));
+      const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body));
       return resolve(raw);
     }
     const chunks = [];
@@ -26,27 +24,27 @@ function verifySignature(rawBody, secret, signature) {
 }
 
 async function lineGet(path) {
-  const res = await fetch(`${LINE_API}${path}`, {
-    headers: { Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}` },
+  const res = await fetch(LINE_API + path, {
+    headers: { Authorization: 'Bearer ' + process.env.LINE_CHANNEL_ACCESS_TOKEN },
   });
   return res.ok ? res.json() : null;
 }
 
 async function replyMessage(replyToken, text) {
-  const res = await fetch(`${LINE_API}/message/reply`, {
+  const res = await fetch(LINE_API + '/message/reply', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
+      Authorization: 'Bearer ' + process.env.LINE_CHANNEL_ACCESS_TOKEN,
     },
-    body: JSON.stringify({ replyToken, messages: [{ type: 'text', text }] }),
+    body: JSON.stringify({ replyToken: replyToken, messages: [{ type: 'text', text: text }] }),
   });
-  if (!res.ok) throw new Error(`LINE reply failed: ${res.status}`);
+  if (!res.ok) throw new Error('LINE reply failed: ' + res.status);
 }
 
 async function getDisplayName(groupId, userId) {
   try {
-    const profile = await lineGet(`/group/${groupId}/member/${userId}`);
+    const profile = await lineGet('/group/' + groupId + '/member/' + userId);
     return profile && profile.displayName ? profile.displayName : userId;
   } catch (_) {
     return userId;
@@ -55,7 +53,7 @@ async function getDisplayName(groupId, userId) {
 
 function storeMessage(groupId, displayName, text) {
   if (!groupHistory[groupId]) groupHistory[groupId] = [];
-  groupHistory[groupId].push({ displayName, text });
+  groupHistory[groupId].push({ displayName: displayName, text: text });
   if (groupHistory[groupId].length > MAX_HISTORY) {
     groupHistory[groupId].splice(0, groupHistory[groupId].length - MAX_HISTORY);
   }
@@ -63,14 +61,13 @@ function storeMessage(groupId, displayName, text) {
 
 async function buildSummary(groupId) {
   const SEIRI = '整理して';
-  const history = (groupHistory[groupId] || []).filter(m => m.text !== SEIRI);
+  const history = (groupHistory[groupId] || []).filter(function(m) { return m.text !== SEIRI; });
   if (history.length === 0) {
-    return 'まだ整理できる会話履歴がありません。
-グループで会話が蓄積されてからもう一度お試しください！';
+    return 'まだ整理できる会話履歴がありません。\nグループで会話が蓄積されてからもう一度お試しください！';
   }
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-  const historyText = history.map(m => `${m.displayName}: ${m.text}`).join('\n');
+  const historyText = history.map(function(m) { return m.displayName + ': ' + m.text; }).join('\n');
   const prompt = '以下はプロジェクトチームのグループLINEの会話履歴です。プロジェクト管理の観点から分析し、必ず以下の5項目を日本語で回答してください。該当情報がない項目は「特になし」と記載。\n\n「会話履歴」\n' + historyText + '\n\n---\n\n[1] プロジェクトの進行状況まとめ\n\n[2] メンバー別のタスクと進捗\n\n[3] 担当者未定のタスク\n\n[4] 決定事項\n\n[5] 未決事項';
   const result = await model.generateContent(prompt);
   return result.response.text();
@@ -83,9 +80,7 @@ async function processEvent(event) {
   const userId = event.source.userId;
   const text = event.message.text.trim();
   const SEIRI = '整理して';
-  const displayName = event.source.groupId
-    ? await getDisplayName(groupId, userId)
-    : userId;
+  const displayName = event.source.groupId ? await getDisplayName(groupId, userId) : userId;
   storeMessage(groupId, displayName, text);
   if (text !== SEIRI) return;
   let replyText;
