@@ -92,7 +92,7 @@ async function buildSummary(groupId, inlineText) {
   }
 
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
 
   const prompt = [
     '以下はプロジェクトチームのグループLINEの会話履歴です。',
