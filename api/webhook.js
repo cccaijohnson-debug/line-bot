@@ -83,7 +83,7 @@ async function buildSummary(groupId) {
   }
 
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
 
   const historyText = history.map(m => m.displayName + ': ' + m.text).join('\n');
 
