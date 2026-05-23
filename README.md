@@ -78,3 +78,4 @@ LINE group chat bot that summarizes conversations using Gemini AI.
                                                                                                     5. - Chat history is stored in memory only - it resets when Vercel restarts
                                                                                                        - - The bot requires group chat member profile permission to get member names
                                                                                                          - 
+
