@@ -100,14 +100,14 @@ async function processEvent(event) {
   await replyMessage(event.replyToken, replyText);
 }
 
-const handler = async (req, res) => {
+async function handler(req, res) {
   if (req.method !== 'POST') return res.status(200).send('OK');
   const rawBody = await readRawBody(req);
   console.log('[webhook] rawBody length:', rawBody.length);
   console.log('[webhook] SECRET defined:', !!process.env.LINE_CHANNEL_SECRET);
   const signature = req.headers['x-line-signature'];
   if (!signature || !verifySignature(rawBody, process.env.LINE_CHANNEL_SECRET, signature)) {
-    console.error('[webhook] signature verification failed');
+    console.error('[webhook] signature verification failed, rawBody:', rawBody.toString('utf8').substring(0, 100));
     return res.status(401).json({ error: 'Invalid signature' });
   }
   let body;
@@ -118,8 +118,7 @@ const handler = async (req, res) => {
   }
   await Promise.all((body.events || []).map(processEvent));
   res.status(200).json({ status: 'ok' });
-};
-
-handler.config = { api: { bodyParser: false } };
+}
 
 module.exports = handler;
+module.exports.config = { api: { bodyParser: false } };
