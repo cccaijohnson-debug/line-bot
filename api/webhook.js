@@ -5,7 +5,6 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { kv } = require('@vercel/kv');
 
 const LINE_API = 'https://api.line.me/v2/bot';
-
 const MAX_HISTORY = 200;
 
 const TRIGGER = '整理して';
@@ -92,7 +91,7 @@ async function buildSummary(groupId, inlineText) {
   }
 
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-lite' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
   const prompt = [
     '以下はプロジェクトチームのグループLINEの会話履歴です。',
