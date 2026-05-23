@@ -73,19 +73,26 @@ async function loadMessages(groupId) {
   return items.map(item => (typeof item === 'string' ? JSON.parse(item) : item));
 }
 
-async function buildSummary(groupId) {
-  const messages = await loadMessages(groupId);
-  const history = messages.filter(m => m.text !== TRIGGER);
-  console.log('[buildSummary] groupId=' + groupId + ' historyLen=' + history.length);
+async function buildSummary(groupId, inlineText) {
+  let historyText;
 
-  if (history.length === 0) {
-    return 'まだ整理できる会話履歴がありません。\nグループで会話が蓄積されてからもう一度お試しください！';
+  if (inlineText) {
+    console.log('[buildSummary] inline mode. textLen=' + inlineText.length);
+    historyText = inlineText;
+  } else {
+    const messages = await loadMessages(groupId);
+    const history = messages.filter(m => m.text !== TRIGGER);
+    console.log('[buildSummary] groupId=' + groupId + ' historyLen=' + history.length);
+
+    if (history.length === 0) {
+      return 'まだ整理できる会話履歴がありません。\nグループで会話が蓄積されてからもう一度お試しください！';
+    }
+
+    historyText = history.map(m => m.displayName + ': ' + m.text).join('\n');
   }
 
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
-
-  const historyText = history.map(m => m.displayName + ': ' + m.text).join('\n');
 
   const prompt = [
     '以下はプロジェクトチームのグループLINEの会話履歴です。',
@@ -140,9 +147,16 @@ async function processEvent(event) {
 
   console.log('[trigger] matched. building summary...');
 
+  const triggerIndex = text.indexOf(TRIGGER);
+  const afterTrigger = text.slice(triggerIndex + TRIGGER.length).trim();
+  const inlineText = afterTrigger.length > 0 ? afterTrigger : null;
+  if (inlineText) {
+    console.log('[trigger] inline text mode. len=' + inlineText.length);
+  }
+
   let replyText;
   try {
-    replyText = await buildSummary(groupId);
+    replyText = await buildSummary(groupId, inlineText);
   } catch (e) {
     console.error('[summary] error: ' + e.message);
     replyText = '整理中にエラーが発生しました。しばらく後にもう一度お試しください。';
