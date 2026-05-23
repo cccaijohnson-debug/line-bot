@@ -1,5 +1,3 @@
-'use strict';
-
 const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
@@ -73,7 +71,7 @@ async function buildSummary(groupId) {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
   const historyText = history.map(m => `${m.displayName}: ${m.text}`).join('\n');
-  const prompt = `以下はプロジェクトチームのグループLINEの会話履歴です。プロジェクト管理の観点から分析し、必ず以下の5項目を日本語で回答してください。該当情報がない項目は「特になし」と記載。\n\n「会話履歴」\n${historyText}\n\n---\n\n📊 プロジェクトの進行状況まとめ\n\n👥 メンバー別のタスクと進捗\n\n❓ 担当者未定のタスク\n\n✅ 決定事項\n\n⚠️ 未決事項`;
+  const prompt = '以下はプロジェクトチームのグループLINEの会話履歴です。プロジェクト管理の観点から分析し、必ず以下の5項目を日本語で回答してください。該当情報がない項目は「特になし」と記載。\n\n「会話履歴」\n' + historyText + '\n\n---\n\n[1] プロジェクトの進行状況まとめ\n\n[2] メンバー別のタスクと進捗\n\n[3] 担当者未定のタスク\n\n[4] 決定事項\n\n[5] 未決事項';
   const result = await model.generateContent(prompt);
   return result.response.text();
 }
@@ -107,7 +105,7 @@ async function handler(req, res) {
   console.log('[webhook] SECRET defined:', !!process.env.LINE_CHANNEL_SECRET);
   const signature = req.headers['x-line-signature'];
   if (!signature || !verifySignature(rawBody, process.env.LINE_CHANNEL_SECRET, signature)) {
-    console.error('[webhook] signature verification failed, rawBody:', rawBody.toString('utf8').substring(0, 100));
+    console.error('[webhook] sig fail');
     return res.status(401).json({ error: 'Invalid signature' });
   }
   let body;
