@@ -169,6 +169,7 @@ async function saveMessage(groupId, displayName, text) {
                   const len = await kv.llen(key);
                   if (len > MAX_HISTORY) await kv.ltrim(key, len - MAX_HISTORY, -1);
                   await kv.expire(key, EXPIRE_SECONDS);
+                  await kv.sadd('groups', groupId);
                   console.log('[kv] saved. key=' + key + ' len=' + Math.min(len, MAX_HISTORY));
                   return { ok: true, key, len: Math.min(len, MAX_HISTORY) };
         } catch (e) {
