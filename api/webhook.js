@@ -1,8 +1,9 @@
 const crypto = require('crypto');
-const { GoogleGenAI } = require('@google/genai');
 const { kv } = require('@vercel/kv');
 
 const LINE_API = 'https://api.line.me/v2/bot';
+const GEMINI_API = 'https://generativelanguage.googleapis.com/v1beta/models/';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const MAX_HISTORY = 200;
 const TRIGGER = '整理して';
 const EXPIRE_SECONDS = 60 * 60 * 24 * 30;
@@ -15,11 +16,23 @@ const KV_ENV_KEYS = [
         'UPSTASH_REDIS_REST_URL',
         'UPSTASH_REDIS_REST_TOKEN',
 ];
+const SECRET_ENV_KEYS = [
+        'GEMINI_API_KEY',
+        'LINE_CHANNEL_ACCESS_TOKEN',
+        'LINE_CHANNEL_SECRET',
+        'KV_REST_API_TOKEN',
+        'KV_REST_API_READ_ONLY_TOKEN',
+];
 
 let kvEnvLogged = false;
 
 function trimForLog(value) {
-        const text = JSON.stringify(value);
+        let text;
+        try {
+                  text = typeof value === 'string' ? value : JSON.stringify(value);
+        } catch (_) {
+                  text = String(value);
+        }
         return (text || '').slice(0, 500);
 }
 
@@ -36,16 +49,34 @@ function logKvEnvStatus(force) {
         console.log('[kv] env status:', JSON.stringify(getEnvStatus(KV_ENV_KEYS)));
 }
 
+function getErrorMessage(error) {
+        if (!error) return 'unknown error';
+        return error.message || String(error);
+}
+
+function redactSecrets(text) {
+        let output = String(text || '');
+        SECRET_ENV_KEYS.forEach(key => {
+                  const secret = process.env[key];
+                  if (secret) output = output.split(secret).join('[redacted]');
+        });
+        return output;
+}
+
 function logError(label, error) {
         if (!error) {
                   console.error(label + ': unknown error');
                   return;
         }
 
-        console.error(label + ':', error.stack || error.message || String(error));
+        console.error(label + ':', redactSecrets(error.stack || getErrorMessage(error)));
         if (error.cause) {
-                  console.error(label + ' cause:', error.cause.stack || error.cause.message || String(error.cause));
+                  console.error(label + ' cause:', redactSecrets(error.cause.stack || getErrorMessage(error.cause)));
         }
+}
+
+function errorMessageForLine(error) {
+        return redactSecrets(getErrorMessage(error)).slice(0, 300);
 }
 
 async function readJsonOrText(res) {
@@ -111,13 +142,17 @@ async function pushMessage(groupId, text) {
         return data;
 }
 
-async function pushSummaryError(groupId, error) {
+async function pushSummaryError(groupId, error, mode) {
         logError('[summary] error', error);
         try {
-                  await pushMessage(
-                            groupId,
-                            '整理中にエラーが発生しました。\n会話履歴を使う場合はKV設定を確認してください。\n急ぎの場合は「整理して」の次の行に整理したい本文を貼ってください。'
-                  );
+                  const lines = ['整理中にエラーが発生しました。'];
+                  if (mode === 'direct') {
+                            lines.push('貼り付け本文は受け取れていますが、Gemini API呼び出しで失敗しました。');
+                  } else {
+                            lines.push('会話履歴の読み込み、またはGemini API呼び出しで失敗しました。');
+                  }
+                  lines.push('原因: ' + errorMessageForLine(error));
+                  await pushMessage(groupId, lines.join('\n'));
         } catch (pushError) {
                   logError('[summary] error push failed', pushError);
         }
@@ -173,14 +208,39 @@ function extractDirectText(text) {
         return text.slice(index + TRIGGER.length).trim();
 }
 
+async function callGemini(prompt) {
+        const apiKey = process.env.GEMINI_API_KEY;
+        console.log('[gemini] env status:', JSON.stringify({ GEMINI_API_KEY: apiKey ? 'set' : 'missing', GEMINI_MODEL }));
+        if (!apiKey) throw new Error('Missing GEMINI_API_KEY');
+
+        const res = await fetch(GEMINI_API + encodeURIComponent(GEMINI_MODEL) + ':generateContent?key=' + encodeURIComponent(apiKey), {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                              contents: [{ parts: [{ text: prompt }] }],
+                  }),
+        });
+        const data = await readJsonOrText(res);
+        if (!res.ok) {
+                  throw new Error('Gemini API failed. status=' + res.status + ' body=' + trimForLog(data));
+        }
+
+        const parts = data && data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
+        const text = Array.isArray(parts) ? parts.map(part => part.text || '').join('').trim() : '';
+        if (!text) {
+                  throw new Error('Gemini API returned empty text. body=' + trimForLog(data));
+        }
+
+        console.log('[gemini] response received');
+        return text;
+}
+
 async function buildSummaryFromText(historyText) {
         const normalizedHistoryText = historyText.trim();
 
         if (normalizedHistoryText.length === 0) {
                   return 'まだ整理できる会話履歴がありません。\nグループで会話が蓄積されてからもう一度お試しください！';
         }
-
-        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
         const prompt = [
                   '以下はプロジェクトチームのグループLINEの会話履歴です。',
@@ -207,13 +267,7 @@ async function buildSummaryFromText(historyText) {
                   '（まだ検討中・未解決の内容を箇条書きで）',
         ].join('\n');
 
-        const response = await ai.models.generateContent({
-                  model: 'gemini-2.0-flash',
-                  contents: prompt,
-        });
-
-        console.log('[gemini] response received');
-        return response.text;
+        return callGemini(prompt);
 }
 
 async function buildSummary(groupId) {
@@ -252,7 +306,7 @@ async function processEvent(event) {
                                       const summary = await buildSummaryFromText('貼り付けテキスト:\n' + directText);
                                       await pushMessage(groupId, summary);
                             } catch (e) {
-                                      await pushSummaryError(groupId, e);
+                                      await pushSummaryError(groupId, e, 'direct');
                             }
                             return;
                   }
@@ -285,7 +339,7 @@ async function processEvent(event) {
                             const summary = await buildSummary(groupId);
                             await pushMessage(groupId, summary);
                   } catch (e) {
-                            await pushSummaryError(groupId, e);
+                            await pushSummaryError(groupId, e, 'history');
                   }
         } catch (e) {
                   logError('[event] error', e);
