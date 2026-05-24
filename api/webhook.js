@@ -278,13 +278,25 @@ async function callGemini(prompt) {
         console.log('[gemini] env status:', JSON.stringify({ GEMINI_API_KEY: apiKey ? 'set' : 'missing', GEMINI_MODEL }));
         if (!apiKey) throw new Error('Missing GEMINI_API_KEY');
 
-        const res = await fetch(GEMINI_API + encodeURIComponent(GEMINI_MODEL) + ':generateContent?key=' + encodeURIComponent(apiKey), {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                              contents: [{ parts: [{ text: prompt }] }],
-                  }),
-        });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000); // 8秒でタイムアウト
+
+        let res;
+        try {
+                res = await fetch(GEMINI_API + encodeURIComponent(GEMINI_MODEL) + ':generateContent?key=' + encodeURIComponent(apiKey), {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                                      contents: [{ parts: [{ text: prompt }] }],
+                          }),
+                          signal: controller.signal,
+                });
+        } catch (e) {
+                clearTimeout(timeout);
+                if (e.name === 'AbortError') throw new Error('Gemini API timeout after 8s. status=408');
+                throw e;
+        }
+        clearTimeout(timeout);
         const data = await readJsonOrText(res);
         if (!res.ok) {
                   throw new Error('Gemini API failed. status=' + res.status + ' body=' + trimForLog(data));
