@@ -453,13 +453,14 @@ async function handler(req, res) {
         console.log('[webhook] events count:', (body.events || []).length);
         console.log('[webhook] body:', JSON.stringify(body).slice(0, 500));
 
+        // LINEに200を即返してからGemini処理（Vercel 10秒制限を最大活用）
+        res.status(200).json({ status: 'ok' });
+
         try {
                   await Promise.all((body.events || []).map(processEvent));
         } catch (e) {
                   logError('[handler] error', e);
         }
-
-        res.status(200).json({ status: 'ok' });
 }
 
 module.exports = handler;
