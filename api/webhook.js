@@ -208,6 +208,71 @@ function extractDirectText(text) {
         return text.slice(index + TRIGGER.length).trim();
 }
 
+function isGeminiQuotaError(error) {
+        const message = getErrorMessage(error);
+        return message.includes('status=429') || message.includes('quota') || message.includes('RESOURCE_EXHAUSTED');
+}
+
+function splitSentences(text) {
+        return text
+                  .replace(/^貼り付けテキスト:\s*/u, '')
+                  .split(/[。！？\n]+/u)
+                  .map(line => line.trim())
+                  .filter(Boolean);
+}
+
+function uniqueList(items) {
+        return Array.from(new Set(items.filter(Boolean)));
+}
+
+function pickLines(items, fallback) {
+        const list = uniqueList(items).slice(0, 8);
+        return list.length ? list.map(item => '- ' + item).join('\n') : '- ' + fallback;
+}
+
+function extractMemberTasks(sentences) {
+        const tasks = [];
+        sentences.forEach(sentence => {
+                  sentence.split(/[、,]/u).forEach(part => {
+                            const match = part.trim().match(/^(.{1,20}?(?:さん|氏|くん|ちゃん))は(.+)$/u);
+                            if (match) tasks.push(match[1] + ': ' + match[2].trim());
+                  });
+        });
+        return tasks;
+}
+
+function buildFallbackSummary(historyText, error) {
+        const sentences = splitSentences(historyText);
+        const memberTasks = extractMemberTasks(sentences);
+        const taskKeywords = /担当|タスク|作成|確認|対応|提出|準備|調整|実施|やる|お願いします|締切|期限|まで|今日|明日|来週/u;
+        const decisionKeywords = /決定|確定|承認|合意|決まり|決めた/u;
+        const openKeywords = /未定|未確定|未決|検討|要確認|調整中|確認中|\?/u;
+        const taskLines = sentences.filter(sentence => taskKeywords.test(sentence));
+        const decisions = sentences.filter(sentence => decisionKeywords.test(sentence));
+        const openItems = sentences.filter(sentence => openKeywords.test(sentence));
+        const unassigned = taskLines.filter(sentence => !/(さん|氏|くん|ちゃん)は/u.test(sentence));
+
+        return [
+                  'Gemini APIの利用枠超過のため、簡易整理で返します。',
+                  '原因: ' + errorMessageForLine(error),
+                  '',
+                  '📊 プロジェクトの進行状況まとめ',
+                  sentences.length ? '貼り付けられた内容から、タスク・担当・期限に関係しそうな情報を抽出しました。' : '整理できる本文が見つかりませんでした。',
+                  '',
+                  '👥 メンバー別のタスクと進捗',
+                  pickLines(memberTasks, '特になし'),
+                  '',
+                  '❓ 担当者未定のタスク',
+                  pickLines(unassigned, '特になし'),
+                  '',
+                  '✅ 決定事項',
+                  pickLines(decisions, '特になし'),
+                  '',
+                  '⚠️ 未決事項',
+                  pickLines(openItems, '特になし'),
+        ].join('\n');
+}
+
 async function callGemini(prompt) {
         const apiKey = process.env.GEMINI_API_KEY;
         console.log('[gemini] env status:', JSON.stringify({ GEMINI_API_KEY: apiKey ? 'set' : 'missing', GEMINI_MODEL }));
@@ -267,7 +332,15 @@ async function buildSummaryFromText(historyText) {
                   '（まだ検討中・未解決の内容を箇条書きで）',
         ].join('\n');
 
-        return callGemini(prompt);
+        try {
+                  return await callGemini(prompt);
+        } catch (e) {
+                  if (isGeminiQuotaError(e)) {
+                            console.log('[gemini] quota exceeded. using fallback summary');
+                            return buildFallbackSummary(normalizedHistoryText, e);
+                  }
+                  throw e;
+        }
 }
 
 async function buildSummary(groupId) {
