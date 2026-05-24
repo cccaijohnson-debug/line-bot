@@ -45,6 +45,27 @@ async function pushMessage(groupId, text) {
         return data;
 }
 
+async function loadState(groupId) {
+        const key = 'state:' + groupId;
+        try {
+                const state = await kv.get(key);
+                return typeof state === 'string' ? state : '';
+        } catch (e) {
+                console.error('[kv] loadState error:', e.message);
+                return '';
+        }
+}
+
+async function saveState(groupId, state) {
+        const key = 'state:' + groupId;
+        try {
+                await kv.set(key, state, { ex: 60 * 60 * 24 * 30 });
+                console.log('[kv] state saved. key=' + key);
+        } catch (e) {
+                console.error('[kv] saveState error:', e.message);
+        }
+}
+
 async function loadMessages(groupId) {
         const key = 'msg:' + groupId;
         const items = await kv.lrange(key, 0, -1);
@@ -100,43 +121,75 @@ async function callGemini(prompt) {
 }
 
 async function buildSummary(groupId) {
-        const messages = await loadMessages(groupId);
+        const [messages, currentState] = await Promise.all([
+                loadMessages(groupId),
+                loadState(groupId),
+        ]);
         const history = messages.filter(m => m && m.text && m.text !== TRIGGER);
         const recent = history.slice(-20);
-        console.log('[cron:summary] groupId=' + groupId + ' historyLen=' + history.length + ' sendingLen=' + recent.length);
+        console.log('[cron:summary] groupId=' + groupId + ' historyLen=' + history.length + ' sendingLen=' + recent.length + ' hasState=' + !!currentState);
 
-        if (recent.length === 0) {
-                return null; // 会話がないグループはスキップ
+        if (recent.length === 0 && !currentState) {
+                return null;
         }
 
         const historyText = recent.map(m => (m.displayName || 'unknown') + ': ' + m.text).join('\n');
+        const hasState = currentState && currentState.trim().length > 0;
+        const hasHistory = historyText.trim().length > 0;
 
-        const prompt = [
-                '以下はプロジェクトチームのグループLINEの会話履歴です。',
-                'プロジェクト管理の観点から分析し、必ず以下の5項目を日本語で出力してください。',
-                '該当する情報がない項目は「特になし」と記載してください。',
+        const promptParts = ['あなたはプロジェクト管理アシスタントです。'];
+
+        if (hasState) {
+                promptParts.push(
+                        '前回のまとめに今回の会話を統合して、最新のまとめを出力してください。',
+                        '',
+                        '【前回のまとめ】',
+                        currentState,
+                        '',
+                        '【最新の会話履歴】',
+                        hasHistory ? historyText : '（新しい発言なし）',
+                        '',
+                        'ルール（必ず守ること）：',
+                        '・「⚠️ 進行中・未完了」の項目は、完了の報告がない限り削除しない',
+                        '・「❓ 未定・要確認」の項目は、解決・担当決定の報告がない限り削除しない',
+                        '・新しい会話で完了が確認できたタスクは「✅ 完了・決定事項」に移す',
+                        '・「✅ 完了・決定事項」は今回新たに完了・確定したものだけ表示する（前回分は引き継がない）',
+                        '・新しいタスクや議題は適切なカテゴリに追加する',
+                        '・明らかに不要になった項目だけ削除してよい'
+                );
+        } else {
+                promptParts.push(
+                        '以下の会話履歴からプロジェクトのタスク状態を作成してください。',
+                        '',
+                        '【会話履歴】',
+                        historyText
+                );
+        }
+
+        promptParts.push(
                 '',
-                '【会話履歴】',
-                historyText,
+                '必ず以下の5項目を日本語で出力してください（該当なしの場合は「特になし」）：',
                 '',
                 '---',
                 '📊 プロジェクトの進行状況まとめ',
                 '（全体の現状と進捗を箇条書きで）',
                 '',
-                '👥 メンバー別のタスクと進捗',
+                '👥 メンバー別の担当タスク',
                 '（各メンバーの担当タスクと進捗を箇条書きで）',
                 '',
-                '❓ 担当者未定のタスク',
-                '（担当が決まっていない課題を箇条書きで）',
+                '⚠️ 進行中・未完了',
+                '（完了報告がないタスク・課題。完了報告があるまで削除しない）',
                 '',
-                '✅ 決定事項',
-                '（会話で確定した内容を箇条書きで）',
+                '✅ 完了・決定事項',
+                '（今回の会話で新たに完了・確定した内容のみ）',
                 '',
-                '⚠️ 未決事項',
-                '（まだ検討中・未解決の内容を箇条書きで）',
-        ].join('\n');
+                '❓ 未定・要確認',
+                '（担当・期限が未定のもの。解決するまで削除しない）'
+        );
 
-        return await callGemini(prompt);
+        const summary = await callGemini(promptParts.join('\n'));
+        await saveState(groupId, summary);
+        return summary;
 }
 
 async function handler(req, res) {

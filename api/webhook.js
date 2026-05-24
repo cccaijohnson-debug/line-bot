@@ -180,6 +180,27 @@ async function saveMessage(groupId, displayName, text) {
         }
 }
 
+async function loadState(groupId) {
+        const key = 'state:' + groupId;
+        try {
+                const state = await kv.get(key);
+                return typeof state === 'string' ? state : '';
+        } catch (e) {
+                console.error('[kv] loadState error:', e.message);
+                return '';
+        }
+}
+
+async function saveState(groupId, state) {
+        const key = 'state:' + groupId;
+        try {
+                await kv.set(key, state, { ex: EXPIRE_SECONDS });
+                console.log('[kv] state saved. key=' + key);
+        } catch (e) {
+                console.error('[kv] saveState error:', e.message);
+        }
+}
+
 async function loadMessages(groupId) {
         const key = 'msg:' + groupId;
         logKvEnvStatus(false);
@@ -412,14 +433,90 @@ async function buildPersonSummary(groupId, personName) {
         }
 }
 
+async function buildSummaryWithState(historyText, currentState) {
+        const hasState = currentState && currentState.trim().length > 0;
+        const hasHistory = historyText && historyText.trim().length > 0;
+
+        if (!hasState && !hasHistory) {
+                return 'まだ整理できる会話履歴がありません。\nグループで会話が蓄積されてからもう一度お試しください！';
+        }
+
+        const promptParts = ['あなたはプロジェクト管理アシスタントです。'];
+
+        if (hasState) {
+                promptParts.push(
+                        '前回のまとめに今回の会話を統合して、最新のまとめを出力してください。',
+                        '',
+                        '【前回のまとめ】',
+                        currentState,
+                        '',
+                        '【最新の会話履歴】',
+                        hasHistory ? historyText : '（新しい発言なし）',
+                        '',
+                        'ルール（必ず守ること）：',
+                        '・「⚠️ 進行中・未完了」の項目は、完了の報告がない限り削除しない',
+                        '・「❓ 未定・要確認」の項目は、解決・担当決定の報告がない限り削除しない',
+                        '・新しい会話で完了が確認できたタスクは「✅ 完了・決定事項」に移す',
+                        '・「✅ 完了・決定事項」は今回新たに完了・確定したものだけ表示する（前回分は引き継がない）',
+                        '・新しいタスクや議題は適切なカテゴリに追加する',
+                        '・明らかに不要になった項目だけ削除してよい'
+                );
+        } else {
+                promptParts.push(
+                        '以下の会話履歴からプロジェクトのタスク状態を作成してください。',
+                        '',
+                        '【会話履歴】',
+                        historyText
+                );
+        }
+
+        promptParts.push(
+                '',
+                '必ず以下の5項目を日本語で出力してください（該当なしの場合は「特になし」）：',
+                '',
+                '---',
+                '📊 プロジェクトの進行状況まとめ',
+                '（全体の現状と進捗を箇条書きで）',
+                '',
+                '👥 メンバー別の担当タスク',
+                '（各メンバーの担当タスクと進捗を箇条書きで）',
+                '',
+                '⚠️ 進行中・未完了',
+                '（完了報告がないタスク・課題。完了報告があるまで削除しない）',
+                '',
+                '✅ 完了・決定事項',
+                '（今回の会話で新たに完了・確定した内容のみ）',
+                '',
+                '❓ 未定・要確認',
+                '（担当・期限が未定のもの。解決するまで削除しない）'
+        );
+
+        const prompt = promptParts.join('\n');
+
+        try {
+                return await callGemini(prompt);
+        } catch (e) {
+                if (isGeminiQuotaError(e)) {
+                        console.log('[gemini] quota exceeded. using fallback summary');
+                        return buildFallbackSummary(hasHistory ? historyText : currentState, e);
+                }
+                throw e;
+        }
+}
+
 async function buildSummary(groupId) {
-        const messages = await loadMessages(groupId);
+        const [messages, currentState] = await Promise.all([
+                loadMessages(groupId),
+                loadState(groupId),
+        ]);
         const history = messages.filter(m => m && m.text && m.text !== TRIGGER);
-        const recent = history.slice(-20); // Geminiには最新20件のみ送る
-        console.log('[buildSummary] groupId=' + groupId + ' historyLen=' + history.length + ' sendingLen=' + recent.length);
+        const recent = history.slice(-20);
+        console.log('[buildSummary] groupId=' + groupId + ' historyLen=' + history.length + ' sendingLen=' + recent.length + ' hasState=' + !!currentState);
 
         const historyText = recent.map(m => (m.displayName || 'unknown') + ': ' + m.text).join('\n');
-        return buildSummaryFromText(historyText);
+        const summary = await buildSummaryWithState(historyText, currentState);
+        await saveState(groupId, summary);
+        return summary;
 }
 
 async function processEvent(event) {
