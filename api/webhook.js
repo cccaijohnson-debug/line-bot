@@ -358,9 +358,10 @@ async function buildSummaryFromText(historyText) {
 async function buildSummary(groupId) {
         const messages = await loadMessages(groupId);
         const history = messages.filter(m => m && m.text && m.text !== TRIGGER);
-        console.log('[buildSummary] groupId=' + groupId + ' historyLen=' + history.length);
+        const recent = history.slice(-50); // Geminiには最新50件のみ送る
+        console.log('[buildSummary] groupId=' + groupId + ' historyLen=' + history.length + ' sendingLen=' + recent.length);
 
-        const historyText = history.map(m => (m.displayName || 'unknown') + ': ' + m.text).join('\n');
+        const historyText = recent.map(m => (m.displayName || 'unknown') + ': ' + m.text).join('\n');
         return buildSummaryFromText(historyText);
 }
 
