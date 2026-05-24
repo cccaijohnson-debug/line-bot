@@ -301,7 +301,7 @@ function buildFallbackSummary(historyText, error) {
         ].join('\n');
 }
 
-async function callGemini(prompt) {
+async function callGemini(prompt, retryCount = 0) {
         const apiKey = process.env.GEMINI_API_KEY;
         console.log('[gemini] env status:', JSON.stringify({ GEMINI_API_KEY: apiKey ? 'set' : 'missing', GEMINI_MODEL }));
         if (!apiKey) throw new Error('Missing GEMINI_API_KEY');
@@ -331,6 +331,11 @@ async function callGemini(prompt) {
         clearTimeout(timeout);
         const data = await readJsonOrText(res);
         if (!res.ok) {
+                  if (res.status === 503 && retryCount < 1) {
+                          console.log('[gemini] 503 unavailable, retrying after 1s...');
+                          await new Promise(r => setTimeout(r, 1000));
+                          return callGemini(prompt, retryCount + 1);
+                  }
                   throw new Error('Gemini API failed. status=' + res.status + ' body=' + trimForLog(data));
         }
 
