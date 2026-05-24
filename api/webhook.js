@@ -122,6 +122,30 @@ async function lineGet(path) {
         return data;
 }
 
+async function resolveMentions(groupId, text, mention) {
+        if (!mention || !Array.isArray(mention.mentionees) || mention.mentionees.length === 0) {
+                return text;
+        }
+        // 後ろから置換することでインデックスがずれないようにする
+        const sorted = [...mention.mentionees]
+                .filter(m => m.type === 'user' && m.userId)
+                .sort((a, b) => b.index - a.index);
+
+        let result = text;
+        for (const m of sorted) {
+                try {
+                        const profile = await lineGet('/group/' + groupId + '/member/' + m.userId);
+                        if (!profile || !profile.displayName) continue;
+                        const newMention = '@' + profile.displayName;
+                        result = result.slice(0, m.index) + newMention + result.slice(m.index + m.length);
+                        console.log('[mention] resolved: ' + text.slice(m.index, m.index + m.length) + ' -> ' + newMention);
+                } catch (e) {
+                        logError('[mention] resolve error', e);
+                }
+        }
+        return result;
+}
+
 async function pushMessage(groupId, text) {
         const res = await fetch(LINE_API + '/message/push', {
                   method: 'POST',
@@ -593,7 +617,10 @@ async function processEvent(event) {
                             console.log('[profile] skip: no userId');
                   }
 
-                  const saveResult = await saveMessage(groupId, displayName, text);
+                  const textToSave = event.message.mention
+                            ? await resolveMentions(groupId, text, event.message.mention)
+                            : text;
+                  const saveResult = await saveMessage(groupId, displayName, textToSave);
                   if (!saveResult.ok) {
                             console.error('[kv] continuing without saved history for this event');
                   }
