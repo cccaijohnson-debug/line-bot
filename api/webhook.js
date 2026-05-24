@@ -377,7 +377,7 @@ async function processEvent(event) {
                   const source = event.source || {};
                   const groupId = source.groupId || source.roomId;
                   const text = event.message.text.trim();
-                  const isTrigger = text.includes(TRIGGER);
+                  const isTrigger = text === TRIGGER || text.startsWith(TRIGGER);
                   const directText = isTrigger ? extractDirectText(text) : '';
                   console.log('[event] groupId=' + groupId + ' text=' + event.message.text);
 
