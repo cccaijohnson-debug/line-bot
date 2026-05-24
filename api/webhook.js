@@ -209,6 +209,12 @@ function extractDirectText(text) {
         return text.slice(index + TRIGGER.length).trim();
 }
 
+function extractPersonName(directText) {
+        if (!directText) return '';
+        if (directText.includes('\n') || directText.length > 30) return '';
+        return directText;
+}
+
 function isGeminiQuotaError(error) {
         const message = getErrorMessage(error);
         return message.includes('status=429') || message.includes('quota') || message.includes('RESOURCE_EXHAUSTED');
@@ -360,6 +366,52 @@ async function buildSummaryFromText(historyText) {
         }
 }
 
+async function buildPersonSummary(groupId, personName) {
+        const messages = await loadMessages(groupId);
+        const history = messages.filter(m => m && m.text && m.text !== TRIGGER);
+        const recent = history.slice(-20);
+        console.log('[buildPersonSummary] groupId=' + groupId + ' person=' + personName + ' sendingLen=' + recent.length);
+
+        if (recent.length === 0) {
+                return '「' + personName + '」に関する会話履歴がまだありません。\nグループで会話が蓄積されてからもう一度お試しください！';
+        }
+
+        const historyText = recent.map(m => (m.displayName || 'unknown') + ': ' + m.text).join('\n');
+
+        const prompt = [
+                '以下はプロジェクトチームのグループLINEの会話履歴です。',
+                '「' + personName + '」に関係する情報のみを抽出し、以下の形式で日本語で出力してください。',
+                '該当する情報がない項目は「特になし」と記載してください。',
+                '',
+                '【会話履歴】',
+                historyText,
+                '',
+                '---',
+                '👤 ' + personName + ' の役割まとめ',
+                '',
+                '📋 担当タスク・役割',
+                '（担当しているタスク・役割を箇条書きで）',
+                '',
+                '✅ 完了済み',
+                '（完了したタスク・決まったことを箇条書きで）',
+                '',
+                '⚠️ 進行中・未完了',
+                '（まだ終わっていないタスク・課題を箇条書きで）',
+                '',
+                '❓ 未定・要確認',
+                '（担当・期限などが未定のものを箇条書きで）',
+        ].join('\n');
+
+        try {
+                return await callGemini(prompt);
+        } catch (e) {
+                if (isGeminiQuotaError(e)) {
+                        return 'Gemini APIの利用枠超過のため、「' + personName + '」の役割整理ができませんでした。\n原因: ' + errorMessageForLine(e);
+                }
+                throw e;
+        }
+}
+
 async function buildSummary(groupId) {
         const messages = await loadMessages(groupId);
         const history = messages.filter(m => m && m.text && m.text !== TRIGGER);
@@ -392,12 +444,23 @@ async function processEvent(event) {
                   }
 
                   if (directText) {
-                            console.log('[trigger] direct text mode. chars=' + directText.length);
-                            try {
-                                      const summary = await buildSummaryFromText('貼り付けテキスト:\n' + directText);
-                                      await pushMessage(groupId, summary);
-                            } catch (e) {
-                                      await pushSummaryError(groupId, e, 'direct');
+                            const personName = extractPersonName(directText);
+                            if (personName) {
+                                      console.log('[trigger] person filter mode. name=' + personName);
+                                      try {
+                                                const summary = await buildPersonSummary(groupId, personName);
+                                                await pushMessage(groupId, summary);
+                                      } catch (e) {
+                                                await pushSummaryError(groupId, e, 'person');
+                                      }
+                            } else {
+                                      console.log('[trigger] direct text mode. chars=' + directText.length);
+                                      try {
+                                                const summary = await buildSummaryFromText('貼り付けテキスト:\n' + directText);
+                                                await pushMessage(groupId, summary);
+                                      } catch (e) {
+                                                await pushSummaryError(groupId, e, 'direct');
+                                      }
                             }
                             return;
                   }
