@@ -288,6 +288,7 @@ async function callGemini(prompt) {
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({
                                       contents: [{ parts: [{ text: prompt }] }],
+                                      generationConfig: { thinkingConfig: { thinkingBudget: 0 } },
                           }),
                           signal: controller.signal,
                 });
