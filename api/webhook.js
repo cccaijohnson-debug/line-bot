@@ -288,7 +288,10 @@ async function callGemini(prompt) {
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({
                                       contents: [{ parts: [{ text: prompt }] }],
-                                      generationConfig: { thinkingConfig: { thinkingBudget: 0 } },
+                                      generationConfig: {
+                                                thinkingConfig: { thinkingBudget: 0 },
+                                                maxOutputTokens: 1024,
+                                      },
                           }),
                           signal: controller.signal,
                 });
@@ -359,7 +362,7 @@ async function buildSummaryFromText(historyText) {
 async function buildSummary(groupId) {
         const messages = await loadMessages(groupId);
         const history = messages.filter(m => m && m.text && m.text !== TRIGGER);
-        const recent = history.slice(-50); // Geminiには最新50件のみ送る
+        const recent = history.slice(-20); // Geminiには最新20件のみ送る
         console.log('[buildSummary] groupId=' + groupId + ' historyLen=' + history.length + ' sendingLen=' + recent.length);
 
         const historyText = recent.map(m => (m.displayName || 'unknown') + ': ' + m.text).join('\n');
