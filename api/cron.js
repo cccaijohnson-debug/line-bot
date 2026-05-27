@@ -126,55 +126,29 @@ async function callGemini(prompt, retryCount = 0) {
 }
 
 async function buildSummary(groupId) {
-        const [messages, currentState] = await Promise.all([
-                loadMessages(groupId),
-                loadState(groupId),
-        ]);
+        // 朝の自動まとめは「整理して」で最後に保存された状態をそのまま送る
+        // Geminiで再分析しないので、完了済みタスクが復活しない
+        const currentState = await loadState(groupId);
+        if (currentState && currentState.trim().length > 0) {
+                console.log('[cron:summary] groupId=' + groupId + ' sending saved state');
+                return currentState;
+        }
+
+        // 保存された状態がない場合のみ会話履歴から新規生成
+        const messages = await loadMessages(groupId);
         const history = messages.filter(m => m && m.text && m.text !== TRIGGER);
         const recent = history.slice(-20);
-        console.log('[cron:summary] groupId=' + groupId + ' historyLen=' + history.length + ' sendingLen=' + recent.length + ' hasState=' + !!currentState);
+        console.log('[cron:summary] groupId=' + groupId + ' no state, generating from history len=' + recent.length);
 
-        if (recent.length === 0 && !currentState) {
-                return null;
-        }
+        if (recent.length === 0) return null;
 
         const historyText = recent.map(m => (m.displayName || 'unknown') + ': ' + m.text).join('\n');
-        const hasState = currentState && currentState.trim().length > 0;
-        const hasHistory = historyText.trim().length > 0;
-
-        const promptParts = ['あなたはプロジェクト管理アシスタントです。'];
-
-        if (hasState) {
-                promptParts.push(
-                        '前回のまとめに今回の会話を統合して、最新のまとめを出力してください。',
-                        '',
-                        '【前回のまとめ】',
-                        currentState,
-                        '',
-                        '【最新の会話履歴】',
-                        hasHistory ? historyText : '（新しい発言なし）',
-                        '',
-                        'ルール（必ず守ること）：',
-                        '・タスクとして認識する条件：①「@名前」でメンションして依頼内容がある、または②明示的に作業・対応を依頼・指示している場合',
-                        '・単に名前が会話に出てくるだけ（依頼・指示なし）はタスクとして扱わない',
-                        '・「⚠️ 進行中・未完了」の項目は、完了の報告がない限り削除しない',
-                        '・「❓ 未定・要確認」の項目は、解決・担当決定の報告がない限り削除しない',
-                        '・新しい会話で完了が確認できたタスクは「✅ 完了・決定事項」に移し、「⚠️ 進行中・未完了」から削除する',
-                        '・「✅ 完了・決定事項」は今回新たに完了・確定したものだけ表示する（前回分は引き継がない）',
-                        '・同じ事象を複数のカテゴリに重複して記載しない',
-                        '・新しいタスクや議題は適切なカテゴリに追加する',
-                        '・明らかに不要になった項目だけ削除してよい'
-                );
-        } else {
-                promptParts.push(
-                        '以下の会話履歴からプロジェクトのタスク状態を作成してください。',
-                        '',
-                        '【会話履歴】',
-                        historyText
-                );
-        }
-
-        promptParts.push(
+        const prompt = [
+                'あなたはプロジェクト管理アシスタントです。',
+                '以下の会話履歴からプロジェクトのタスク状態を作成してください。',
+                '',
+                '【会話履歴】',
+                historyText,
                 '',
                 '必ず以下の5項目を日本語で出力してください（該当なしの場合は「特になし」）：',
                 '',
@@ -186,16 +160,16 @@ async function buildSummary(groupId) {
                 '（各メンバーの担当タスクと進捗を箇条書きで）',
                 '',
                 '⚠️ 進行中・未完了',
-                '（完了報告がないタスク・課題。完了報告があるまで削除しない）',
+                '（完了報告がないタスク・課題）',
                 '',
                 '✅ 完了・決定事項',
-                '（今回の会話で新たに完了・確定した内容のみ）',
+                '（確定した内容を箇条書きで）',
                 '',
                 '❓ 未定・要確認',
-                '（担当・期限が未定のもの。解決するまで削除しない）'
-        );
+                '（担当・期限が未定のもの）',
+        ].join('\n');
 
-        const summary = await callGemini(promptParts.join('\n'));
+        const summary = await callGemini(prompt);
         await saveState(groupId, summary);
         return summary;
 }
