@@ -126,52 +126,45 @@ async function callGemini(prompt, retryCount = 0) {
 }
 
 async function buildSummary(groupId) {
-        // 朝の自動まとめは「整理して」で最後に保存された状態をそのまま送る
-        // Geminiで再分析しないので、完了済みタスクが復活しない
-        const currentState = await loadState(groupId);
-        if (currentState && currentState.trim().length > 0) {
-                console.log('[cron:summary] groupId=' + groupId + ' sending saved state');
-                return currentState;
-        }
-
-        // 保存された状態がない場合のみ会話履歴から新規生成
         const messages = await loadMessages(groupId);
         const history = messages.filter(m => m && m.text && m.text !== TRIGGER);
-        const recent = history.slice(-20);
-        console.log('[cron:summary] groupId=' + groupId + ' no state, generating from history len=' + recent.length);
+        const recent = history.slice(-30);
+        console.log('[cron:summary] groupId=' + groupId + ' historyLen=' + history.length + ' sendingLen=' + recent.length);
 
         if (recent.length === 0) return null;
 
         const historyText = recent.map(m => (m.displayName || 'unknown') + ': ' + m.text).join('\n');
+
         const prompt = [
                 'あなたはプロジェクト管理アシスタントです。',
-                '以下の会話履歴からプロジェクトのタスク状態を作成してください。',
+                '以下のグループLINEの会話から「言いっぱなし・忘れがちな確認事項」だけを短く抽出してください。',
+                '',
+                '抽出対象：',
+                '・「〜します」「〜確認します」「〜送ります」「〜やっておきます」など約束・宣言したが完了報告がないもの',
+                '・誰かへの質問・依頼に対して、回答・対応がまだのもの',
+                '・「〜どうする？」「〜検討しよう」など未決のまま流れているもの',
+                '',
+                '出力ルール：',
+                '・各項目は1行で簡潔に（長文にしない）',
+                '・完了済みのものは「✅ 完了したこと」にだけ書く',
+                '・該当なしの項目は「特になし」と書く',
+                '・担当者名がわかる場合は名前を添える',
                 '',
                 '【会話履歴】',
                 historyText,
                 '',
-                '必ず以下の5項目を日本語で出力してください（該当なしの場合は「特になし」）：',
-                '',
                 '---',
-                '📊 プロジェクトの進行状況まとめ',
-                '（全体の現状と進捗を箇条書きで）',
+                '🔔 要フォローアップ',
+                '（言ったけど完了報告がないこと・忘れてそうなこと）',
                 '',
-                '👥 メンバー別の担当タスク',
-                '（各メンバーの担当タスクと進捗を箇条書きで）',
+                '❓ 未決・要検討',
+                '（誰が・いつやるか決まっていないこと）',
                 '',
-                '⚠️ 進行中・未完了',
-                '（完了報告がないタスク・課題）',
-                '',
-                '✅ 完了・決定事項',
-                '（確定した内容を箇条書きで）',
-                '',
-                '❓ 未定・要確認',
-                '（担当・期限が未定のもの）',
+                '✅ 完了したこと',
+                '（会話内で完了が確認できたこと）',
         ].join('\n');
 
-        const summary = await callGemini(prompt);
-        await saveState(groupId, summary);
-        return summary;
+        return await callGemini(prompt);
 }
 
 async function handler(req, res) {

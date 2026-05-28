@@ -470,93 +470,56 @@ async function buildPersonSummary(groupId, personName) {
         }
 }
 
-async function buildSummaryWithState(historyText, currentState) {
-        const hasState = currentState && currentState.trim().length > 0;
-        const hasHistory = historyText && historyText.trim().length > 0;
+async function buildSummary(groupId) {
+        const messages = await loadMessages(groupId);
+        const history = messages.filter(m => m && m.text && m.text !== TRIGGER);
+        const recent = history.slice(-30);
+        console.log('[buildSummary] groupId=' + groupId + ' historyLen=' + history.length + ' sendingLen=' + recent.length);
 
-        if (!hasState && !hasHistory) {
+        if (recent.length === 0) {
                 return 'まだ整理できる会話履歴がありません。\nグループで会話が蓄積されてからもう一度お試しください！';
         }
 
-        const promptParts = ['あなたはプロジェクト管理アシスタントです。'];
+        const historyText = recent.map(m => (m.displayName || 'unknown') + ': ' + m.text).join('\n');
 
-        if (hasState) {
-                promptParts.push(
-                        '前回のまとめに今回の会話を統合して、最新のまとめを出力してください。',
-                        '',
-                        '【前回のまとめ】',
-                        currentState,
-                        '',
-                        '【最新の会話履歴】',
-                        hasHistory ? historyText : '（新しい発言なし）',
-                        '',
-                        'ルール（必ず守ること）：',
-                        '・タスクとして認識する条件：①「@名前」でメンションして依頼内容がある、または②明示的に作業・対応を依頼・指示している場合',
-                        '・単に名前が会話に出てくるだけ（依頼・指示なし）はタスクとして扱わない',
-                        '・「⚠️ 進行中・未完了」の項目は、完了の報告がない限り削除しない',
-                        '・「❓ 未定・要確認」の項目は、解決・担当決定の報告がない限り削除しない',
-                        '・新しい会話で完了が確認できたタスクは「✅ 完了・決定事項」に移し、「⚠️ 進行中・未完了」から削除する',
-                        '・「✅ 完了・決定事項」は今回新たに完了・確定したものだけ表示する（前回分は引き継がない）',
-                        '・同じ事象を複数のカテゴリに重複して記載しない',
-                        '・新しいタスクや議題は適切なカテゴリに追加する',
-                        '・明らかに不要になった項目だけ削除してよい'
-                );
-        } else {
-                promptParts.push(
-                        '以下の会話履歴からプロジェクトのタスク状態を作成してください。',
-                        '',
-                        '【会話履歴】',
-                        historyText
-                );
-        }
-
-        promptParts.push(
+        const prompt = [
+                'あなたはプロジェクト管理アシスタントです。',
+                '以下のグループLINEの会話から「言いっぱなし・忘れがちな確認事項」だけを短く抽出してください。',
                 '',
-                '必ず以下の5項目を日本語で出力してください（該当なしの場合は「特になし」）：',
+                '抽出対象：',
+                '・「〜します」「〜確認します」「〜送ります」「〜やっておきます」など約束・宣言したが完了報告がないもの',
+                '・誰かへの質問・依頼に対して、回答・対応がまだのもの',
+                '・「〜どうする？」「〜検討しよう」など未決のまま流れているもの',
+                '',
+                '出力ルール：',
+                '・各項目は1行で簡潔に（長文にしない）',
+                '・完了済みのものは「✅ 完了したこと」にだけ書く',
+                '・該当なしの項目は「特になし」と書く',
+                '・担当者名がわかる場合は名前を添える',
+                '',
+                '【会話履歴】',
+                historyText,
                 '',
                 '---',
-                '📊 プロジェクトの進行状況まとめ',
-                '（全体の現状と進捗を箇条書きで）',
+                '🔔 要フォローアップ',
+                '（言ったけど完了報告がないこと・忘れてそうなこと）',
                 '',
-                '👥 メンバー別の担当タスク',
-                '（各メンバーの担当タスクと進捗を箇条書きで）',
+                '❓ 未決・要検討',
+                '（誰が・いつやるか決まっていないこと）',
                 '',
-                '⚠️ 進行中・未完了',
-                '（完了報告がないタスク・課題。完了報告があるまで削除しない）',
-                '',
-                '✅ 完了・決定事項',
-                '（今回の会話で新たに完了・確定した内容のみ）',
-                '',
-                '❓ 未定・要確認',
-                '（担当・期限が未定のもの。解決するまで削除しない）'
-        );
-
-        const prompt = promptParts.join('\n');
+                '✅ 完了したこと',
+                '（会話内で完了が確認できたこと）',
+        ].join('\n');
 
         try {
                 return await callGemini(prompt);
         } catch (e) {
                 if (isGeminiQuotaError(e)) {
                         console.log('[gemini] quota exceeded. using fallback summary');
-                        return buildFallbackSummary(hasHistory ? historyText : currentState, e);
+                        return buildFallbackSummary(historyText, e);
                 }
                 throw e;
         }
-}
-
-async function buildSummary(groupId) {
-        const [messages, currentState] = await Promise.all([
-                loadMessages(groupId),
-                loadState(groupId),
-        ]);
-        const history = messages.filter(m => m && m.text && m.text !== TRIGGER);
-        const recent = history.slice(-20);
-        console.log('[buildSummary] groupId=' + groupId + ' historyLen=' + history.length + ' sendingLen=' + recent.length + ' hasState=' + !!currentState);
-
-        const historyText = recent.map(m => (m.displayName || 'unknown') + ': ' + m.text).join('\n');
-        const summary = await buildSummaryWithState(historyText, currentState);
-        await saveState(groupId, summary);
-        return summary;
 }
 
 async function processEvent(event) {
