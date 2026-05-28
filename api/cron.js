@@ -159,9 +159,6 @@ async function buildSummary(groupId) {
                 '',
                 '❓ 未決・要検討',
                 '（誰が・いつやるか決まっていないこと）',
-                '',
-                '✅ 完了したこと',
-                '（会話内で完了が確認できたこと）',
         ].join('\n');
 
         return await callGemini(prompt);
